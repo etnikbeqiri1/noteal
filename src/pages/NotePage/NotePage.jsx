@@ -3,99 +3,106 @@ import {useParams} from "react-router-dom";
 import {createReactEditorJS} from 'react-editor-js';
 import {useCallback, useEffect, useRef, useState} from "react";
 import DragDrop from 'editorjs-drag-drop';
-import Undo from 'editorjs-undo';
+
 import {CgNotes} from "react-icons/cg";
 import {MdContentCopy} from "react-icons/md";
 import {FaHeart} from "react-icons/fa"
 import {FiShare} from "react-icons/fi"
 
 import {db} from "../../common/firebase";
-import {doc, getDoc, onSnapshot, updateDoc, setDoc} from "firebase/firestore";
+import {doc, getDoc, onSnapshot, setDoc, updateDoc} from "firebase/firestore";
 import {useBoolean, useDebounce} from "usehooks-ts";
-
-
-
 
 
 const CodeBox = require('@bomdi/codebox');
 
 const ReactEditorJS = createReactEditorJS();
-export default function NotePage() {
 
+const random = (length = 8) => {
+    return Math.random().toString(16).substr(2, length);
+};
+
+const uuid = random(16);
+
+export default function NotePage() {
 
     const {id} = useParams()
     const [data, setData] = useState({});
     const {value: loading, setTrue, setFalse} = useBoolean(true);
     const saveData = useDebounce(data, 1000)
     const document = doc(db, "documents", id);
+    const [isReady, setIsReady] = useState(false);
+    const editorCore = useRef(null)
+    const handleInitialize = useCallback((instance) => {
+        editorCore.current = instance
+    }, [])
 
+    const handleReady = () => {
+        setIsReady(true);
+        const editor = editorCore.current._editorJS;
+        new DragDrop(editor);
+    };
+
+    const updateEditorContent = (newData) => {
+        if (editorCore.current) {
+            editorCore.current._editorJS.render(newData).then(r => {
+            });
+        }
+    }
+
+    //initial state
     useEffect(() => {
+        if (!isReady) return;
         getDoc(document).then(data => {
             if (data.data()) {
-                setData(data.data().content)
+                updateEditorContent(data.data().content)
             }
         }).finally(() => {
             setFalse();
         }).catch((e) => {
             console.log(e)
         })
-    }, [])
+    }, [isReady])
 
+    // when remote data changes
     useEffect(() => {
-        return onSnapshot(document, (doc) => {
+        if (!isReady) return;
+        return onSnapshot(document, async (doc) => {
             if (doc.data()) {
-                setData(doc.data().content)
-                console.log(doc.data().content)
+                if (doc.data().uuid !== uuid) {
+                    updateEditorContent(doc.data().content);
+                }
             }
         });
-    }, [])
+    }, [isReady])
 
+
+    const handleChange = useCallback(() => {
+        editorCore.current.save().then(data => {
+            setData(data);
+        })
+    }, [data])
+
+    //debounced update
     useEffect(() => {
-        if (loading) {
-            saveData(data);
-        }
-
-        if (!loading && Object.keys(data).length >= 1) {
-            console.log('intside with length - ' +  Object.keys(data).length)
-
-
+        if (!isReady) return;
+        if (!loading && saveData && Array.isArray(saveData.blocks) && saveData.blocks.length > 0) {
             updateDoc(document, {
-                content: saveData
+                content: saveData,
+                uuid: uuid
             }).then(r => {
             }).catch((e) => {
                 if (e.code === "not-found") {
                     setDoc(document, {
-                        content: saveData
+                        content: saveData,
+                        uuid: uuid
                     }).then(() => {
 
                     })
                 }
             })
         }
-    }, [saveData, loading])
-
-    const handleChange = () => {
-        editorCore.current.save().then(data => {
-            console.log(data)
-            setData(data)
-        })
-    }
-
-    // continues the code for editor here below
-
-    const editorCore = useRef(null)
-
-
-    const handleInitialize = useCallback((instance) => {
-        editorCore.current = instance
-    }, [])
-
-
-    const handleReady = () => {
-        const editor = editorCore.current._editorJS;
-        new Undo({editor})
-        new DragDrop(editor);
-    };
+    }, [isReady, saveData, loading])
 
     return <div className={styles.container}>
         <div className={styles.header}>
@@ -121,23 +128,7 @@ export default function NotePage() {
             </div>
         </div>
         <div className={styles.paper}>
-
-
             <ReactEditorJS
-                // defaultValue={{
-                //     time: 1635603431943,
-                //     blocks: [
-                //         {
-                //             id: "IpKh1dMyC6",
-                //             type: "paragraph",
-                //             data: {
-                //                 text:
-                //                     "We have been working 😏"
-                //             }
-                //         }
-                //     ]
-                // }}
-                defaultValue={data}
                 onInitialize={handleInitialize}
                 onReady={handleReady}
                 tools={{
